@@ -161,27 +161,7 @@ eventually, job queue populates response, puts on completionqueue
 event loop of completionqueue sends response
 object destroyed
 
-![Alt text](https://g.gravizo.com/source/svg?https://raw.githubusercontent.com/cjcobb23/grpcRippledDesign/design/execution_sequence.plantuml)
-
-
-![Alt text](https://g.gravizo.com/source/custom_mark14?https%3A%2F%2Fraw.githubusercontent.com%2FTLmaK0%2Fgravizo%2Fmaster%2FREADME.md)
-<details> 
-<summary></summary>
-custom_mark14
-@startuml;
-actor Client;
-participant "GRPC Server" as G;
-participant "JobQueue" as JQ;
-Client -> G: Send Request;
-G -> JQ : Post Coroutine
-Client -> G: Send Request;
-G -> JQ : Post Coroutine
-JQ -> Client : Execute Coroutine and Send Response
-JQ -> Client : Execute Coroutine and Send Response
-`
-@enduml
-custom_mark13
-</details>
+![Alt text](https://g.gravizo.com/source/svg?https://raw.githubusercontent.com/cjcobb23/grpcRippledDesign/master/design/execution_sequence.plantuml)
 
 ## State Diagrams?
 ## Future work?
