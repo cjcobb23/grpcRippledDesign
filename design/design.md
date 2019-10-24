@@ -1,7 +1,21 @@
 # Native support for GRPC in rippled
 
 ## Overview
-What is grpc?
+GRPC is an RPC system that allows client applications to directly call methods
+on a server application as if it was a local object. gRPC uses protocol buffers
+as its Interface Definition Language, as well as the underlying message
+interchange format. gRPC has bindings in many languages. gRPC uses the protocol
+buffer compiler (`protoc`) with the gRPC plugin to generate data access classes
+as well as client and server code. This generated code handles serialization,
+deserialization and I/O. The messages and methods are defined in `.proto` files
+that are used by both client and server. For more information about gRPC and
+protocol buffers, go [here](https://grpc.io/docs/).
+
+Currently, rippled supports RPC over Web Socket, REST-JSON and CLI. gRPC would
+be in addition to these existing RPC technologies. The reason for adding gRPC
+support to rippled is that gRPC is very easy to use as a client, and has
+bindings in many languages, allowing developers to more quickly develop
+applications without worrying about small details and nuances related to RPC.
 
 ## ExecutionConcept
 
@@ -37,9 +51,11 @@ scalablity, since handlers are called from the JobQueue.
 The server code is adapted from the example found
 [here](https://github.com/grpc/grpc/blob/v1.24.0/examples/cpp/helloworld/greeter_async_server.cc)
 
+`CompletionQueue` is a class of the GRPC library. `CompletionQueue` is used to queue events, and provides a method, `CompletionQueue::Next()` to query for any events that have occurred. Events are returned by `CompletionQueue` in the form of a `void *` pointer. In our application, `CompletionQueue` returns pointers to `CallData` objects, which are used to service requests.
+
 Each request is represented by a `CallData` object. `CallData` is an abstract
 class that implements a method `Proceed()` and can be in one of three states:
-CREATE, PROCESS or FINISH. `Proceed()` transitions the object from one
+CREATE, PROCESS or FINISH. These states correspond to different states in the lifecycle of an rpc call, and `Proceed()` transitions the object from one
 state to the next. `CallData` has three pure virtual methods:
 `doCreate()`, `doProcess()` and `doFinish()`, which are implemented by derived
 classes. For each rpc method, there is a class that derives from `CallData`, and
@@ -113,7 +129,7 @@ is the type of the protobuf object. `RPC::ContextGeneric<T>` is very similar to
 `RPC::Context`, except the `params` member is of type `T` and there are no
 `Headers`.
 
-Below is an example handler signature; io::xpring is the namespace of the
+Below is an example handler signature; `io::xpring` is the namespace of the
 protobuf objects, whereas `GetFeeRequest` is the request type and `Fee` is the
 response type.
 ```
@@ -121,7 +137,7 @@ io::xpring::Fee doFee(RPC::ContextGeneric<io::xpring::GetFeeRequest>& context);
 ```
 Versioning for grpc is usually done by changing the package name, which creates
 protobuf objects in a new c++ namespace. For example, changing the package name
-to io.xpring.v2 results in objects with namespace io::xpring::v2. In the event
+to `io.xpring.v2` results in objects with namespace `io::xpring::v2`. In the event
 that a handler does not change between versions (which implies the objects are
 the same in all but namespace), the old handler can be reused by templating the
 handler signature like so:
@@ -130,40 +146,75 @@ handler signature like so:
 template<class T, class R>
 R doFee(RPC::ContextGeneric<T>& context);
 ```
-
-An abstract class CallData implements a method Proceed(), which transitions from
-one state to the next. There are three states, CREATE, PROCESS, FINISH, and
-progression goes from CREATE to PROCESS to FINISH. the methods
-doCreate(),doProcess() and doFinish() are pure virtual and implemented by
-subclasses. Each subclass corresponds to a particualr grpc request, The sublcass
-objects are in the create state upon construction and call process() in the
-ctor, 
-        // As part of the initial CREATE state, we *request* that the system
-        // start processing GetAccountInfo requests. In this request, "this" acts are
-        // the tag uniquely identifying the request (so that different CallData
-        // instances can serve different requests concurrently), in this case
-        // the memory address of this CallData instance.
-
-
-**Just copy documentation from call data**
-
-the event loop calls process for each object
-GRPC classes (CompletionQueue)
 ## Use Case
-Request-Response
+The GRPC service will be used in a request response format (as opposed to streaming).
+The client will issue a request, and then receive a response.
+
+An application developer can quickly write client code in their language of
+choice using the `.proto` files and the code generation tools of gRPC.
+
 ## Interface
-.proto files
+The interface to the GRPC service is defined by the .proto files. The `.proto` files
+define the structure of the messages, the methods available, their inputs and outputs, and the service itself.
+GRPC, with the help of protobuf, autogenerates code based on these `.proto` files,
+for both client and server. GRPC has bindings in many common programming languages
+([link](https://grpc.io/docs/reference/)).
+A client of the GRPC service we are building would use the exact same `.proto`
+files as the server, to generate the client code. The generated code (both
+client and server), handles serialization, deserialization and I/O. Protobuf
+allows one to define messages with named and typed fields, and allows for user
+defined types. Client and server code can then manipulate the generated objects using the
+message names, field names and types defined in the `.proto` file. For example,
+using the below example `.proto` file:
+```
+service XRPLedgerAPI {
+  // Get account info for an account on the XRP Ledger.
+  rpc GetAccountInfo (GetAccountInfoRequest) returns (AccountInfo);
+
+  // Get the fee for a transaction on the XRP Ledger.
+  rpc GetFee (GetFeeRequest) returns (Fee);
+  message GetAccountInfoRequest {
+    // The address to get info about.
+    string address = 1;
+  }
+
+  message AccountInfo {
+    XRPAmount balance = 1;
+  
+    uint64 sequence = 2;
+  
+  }
+  message XRPAmount {
+    // A numeric string representing the number of drops of XRP.
+    string drops = 1;
+  }
+
+
+}
+```
+A client can do things like:
+```
+GetAccountInfoRequest request;
+request.set_address("rLkMJhSVwhmummLjJPVrwQRZZYiYQhVQ1A");
+//Send the request, receive populated response
+uint64_t sequence = response.sequence();
+std::string drops = response.balance.drops();
+```
+
+For more information about protocol buffers see
+[here](https://developers.google.com/protocol-buffers/docs/overview).
+For more information about grpc and protocol buffers, see
+[here](https://grpc.io/docs/guides/)
+
 ## Sequence Diagrams?
-grpc server starts listening on socket
-client connects, hand data to job queue
-wait for next request
-eventually, job queue populates response, puts on completionqueue
-event loop of completionqueue sends response
-object destroyed
+Below is a sequence diagram of handling two grpc requests in parallel. In the diagram, the responses are sent in the order the requests were received; this is not a rule, and responses could be sent in a different order than the requests were recieved.
 
 ![Alt text](https://g.gravizo.com/source/svg?https://raw.githubusercontent.com/cjcobb23/grpcRippledDesign/master/design/execution_sequence.plantuml)
 
 ## State Diagrams?
+Below is a state diagram for the CallData objects. Note, `Proceed()` is used to advance the state and perform work, and is called first from the constructor, and subsequently from the event loop, when the appropriate event occurs.
+
+![Alt text](https://g.gravizo.com/source/svg?https://raw.githubusercontent.com/cjcobb23/grpcRippledDesign/master/design/calldata_state.plantuml)
 ## Future work?
 * TLS
 * Streaming?
