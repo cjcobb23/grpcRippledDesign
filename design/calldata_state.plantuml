@@ -1,0 +1,12 @@
+@startuml
+[*] -> CREATE : Constructor
+CREATE : CallData object created, not listening
+CREATE --> PROCESS : Proceed()
+PROCESS : Listening for request
+PROCESS --> FINISH : Proceed() (a request was received)
+FINISH : Response submitted for sending
+FINISH --> destroyed : Proceed() (response was sent)
+destroyed : Object destroyed
+destroyed --> [*]
+
+@enduml
