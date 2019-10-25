@@ -6,16 +6,23 @@ Each numbered item below corresponds to a requirement; a corresponding *Note* is
 
 ## Requirements List
 
-1. **GRPC server will listen for requests in a single dedicated thread, in the same process as rippled**
-    - *Note: this thread will solely be for I/O*
-2. **Request processing, response population and other application logic will be done via a coroutine run by the JobQueue.**
-    - *Note: as little work as possible will be done by the dedicated GRPC I/O thread, and as much work as possible will be done by the JobQueue*
-3. **rippled will serve multiple grpc requests concurrently**
-4. **Each request will have a corresponding input and output message defined in .proto files**
-5. **Each parameter of a grpc request will have a corresponding named and typed field in the protobuf request message**
+1. **gRPC server shall run in the same process as rippled**
+2. **rippled shall serve multiple grpc requests concurrently**
+3. **Each request shall have a corresponding input and output message defined in .proto files**
+4. **Each parameter of a grpc request shall have a corresponding named and typed field in the protobuf request message**
     - *Note: this prohibits passing a blob of json in a protobuf message*
-6. **Each data member of a grpc response will have a corresponding named and typed field in the protobuf response message**
+5. **Each data member of a grpc response shall have a corresponding named and typed field in the protobuf response message**
     - *Note: again prohibits returning json blob*
-    - *Note: 4,5 and 6 imply that the input and output of each grpc method is strictly defined*
-7. **The first iteration of GRPC implementation will implement `account_info`, `fee` and `submit`**
-    - *Note: GRPC calls will mirror the functionality of existing RPC calls, except deprecated functionality*
+    - *Note: 3,4 and 5 imply that the input and output of each grpc method is strictly defined*
+6. **gRPC calls shall mirror the functionality of existing RPC calls, except deprecated functionality**
+
+## Requirements Table
+
+| Requirement | Comments |
+| ----------- | ----------- |
+| 1. gRPC server shall run in the same process as rippled | |
+| 2. rippled shall serve multiple gRPC requests concurrently| |
+| 3. Each request shall have a corresponding input and output message defined in .proto files | |
+| 4. Each parameter of a grpc request shall have a corresponding named and typed field in the protobuf request message | *Note: this prohibits passing a blob of json in a protobuf message* |
+| 5. Each data member of a grpc response shall have a corresponding named and typed field in the protobuf response message | *Note: prohibits returning blob of json. 3, 4 and 5 imply that the input and output of each grpc method is strictly defined*|
+| 6. gRPC methods shall mirror the functionality of existing RPC calls, except deprecated functionality | |
