@@ -21,9 +21,9 @@ applications without worrying about small details and nuances related to RPC.
 
 A class encapsulting the gRPC server is a member of `ApplicationImpl`, and is
 constructed at the time of `ApplicationImpl` construction.  The gRPC server does
-not start listening for requests yet.  In `Application::setup()`, the grpc
+not start listening for requests yet.  In `Application::setup()`, the gRPC
 server begins listening for requests, and an event loop begins running in a
-separate, dedicated thread; this thread is used exclusively for servicing grpc
+separate, dedicated thread; this thread is used exclusively for servicing gRPC
 requests, and is an additional thread used by the application, separate from the
 threads used by the `JobQueue` or the I/O threads used by asio. In the setup of
 the event loop, each rpc call (request type), is bound to the `CompletionQueue`;
@@ -49,7 +49,7 @@ in the `JobQueue` to be processed; in other words, requests are always accepted 
 the gRPC server, regardless of how many requests are currently being processed.
 
 The coroutines posted to the `JobQueue` populate the response and submit the
-response for sending. Once grpc actually sends
+response for sending. Once gRPC actually sends
 the response (gRPC handles the sending internally), an event is placed on the `CompletionQueue`; when
 `CompletionQueue::Next()` returns such an event, signaling the response has been
 sent, the event loop cleans up the resources associated with this
@@ -68,7 +68,7 @@ endpoint. If the `ResourceManager` indicates that we should "disconnect" from
 a specific endpoint, a coroutine will not be posted to the `JobQueue`, the
 handler will not be called and an error will be returned to the client.
 
-TODO shutdown of grpc
+TODO shutdown of gRPC
 
 ## Classes
 The server code is adapted from the example found
@@ -196,7 +196,7 @@ Once the second flow is created, it does not wait for the first flow to finish,
 or synchronize with the first flow in any way,
 and could potentially finish executing before the first flow finishes.
 
-There will be a handler for each grpc method, separate from the existing json
+There will be a handler for each gRPC method, separate from the existing json
 handlers. The handler will take in the protobuf object that represents the
 request, and return a protobuf object that represents the response. The protobuf
 object will be a member of a templated class `RPC::ContextGeneric<T>`, where T
@@ -210,7 +210,7 @@ response type.
 ```
 xrp::v1::Fee doFee(RPC::ContextGeneric<xrp::v1::GetFeeRequest>& context);
 ```
-Versioning for grpc is usually done by changing the package name, which creates
+Versioning for gRPC is usually done by changing the package name, which creates
 protobuf objects in a new c++ namespace. For example, changing the package name
 to `xrp.v2` results in objects with namespace `xrp::v2`. In the event
 that a handler does not change between versions (which implies the objects are
@@ -273,7 +273,7 @@ std::string drops = response.balance.drops();
 
 For more information about protocol buffers see
 [here](https://developers.google.com/protocol-buffers/docs/overview).
-For more information about grpc and protocol buffers, see
+For more information about gRPC and protocol buffers, see
 [here](https://grpc.io/docs/guides/)
 
 To support gRPC inside rippled, existing handlers will be mapped 1:1 to `.proto`
@@ -284,7 +284,7 @@ Incrementally, all functionality of existing handlers (excluding deprecated
 functionality) will be implemented by gRPC handlers.
 
 ## Sequence Diagrams?
-Below is a sequence diagram of handling two grpc requests in parallel. In the
+Below is a sequence diagram of handling two gRPC requests in parallel. In the
 diagram, the responses are sent in the order the requests were received; this is
 not a rule, and responses could be sent in a different order than the requests
 were recieved.
