@@ -297,9 +297,5 @@ advance the state and perform work, and is called first from the constructor,
 and subsequently from the event loop, when the appropriate event occurs.
 
 ![Alt text](https://g.gravizo.com/source/svg?https://raw.githubusercontent.com/cjcobb23/grpcRippledDesign/master/design/calldata_state.plantuml)
-## Future work?
-* TLS
-* Streaming?
 
-## Reverse Engineering
 
