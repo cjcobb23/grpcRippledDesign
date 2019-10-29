@@ -245,21 +245,19 @@ service XRPLedgerAPI {
   rpc GetFee (GetFeeRequest) returns (Fee);
   message GetAccountInfoRequest {
     // The address to get info about.
-    string address = 1;
+    bytes address = 1;
   }
 
   message AccountInfo {
     XRPAmount balance = 1;
   
-    uint64 sequence = 2;
+    uint32 sequence = 2;
   
   }
   message XRPAmount {
     // A numeric string representing the number of drops of XRP.
-    string drops = 1;
+    bytes drops = 1;
   }
-
-
 }
 ```
 A client can do things like:
@@ -267,9 +265,10 @@ A client can do things like:
 GetAccountInfoRequest request;
 request.set_address("rLkMJhSVwhmummLjJPVrwQRZZYiYQhVQ1A");
 //Send the request, receive populated response
-uint64_t sequence = response.sequence();
+uint32_t sequence = response.sequence();
 std::string drops = response.balance.drops();
 ```
+Note, the `bytes` type in a protobuf message is decoded as `std::string` in C++.
 
 For more information about protocol buffers see
 [here](https://developers.google.com/protocol-buffers/docs/overview).
@@ -282,6 +281,25 @@ with the same fields and data that the existing handlers are expecting in JSON f
 as well as a handler that accepts this protobuf message.
 Incrementally, all functionality of existing handlers (excluding deprecated
 functionality) will be implemented by gRPC handlers.
+
+The types of the protobuf messages will be derived from the types of the data in
+the JSON used by existing RPC infrastructure. The types will be mapped according
+to the below diagram:
+
+| Json::ValueType | protobuf type |
+| --------------- | ------------- |
+| intValue | sint32 | |
+| uintValue | uint32 | |
+| realValue | double | |
+| stringValue | bytes or string * |
+| booleanValue | bool |
+| arrayValue | repeated * |
+| objectValue | message * |
+
+Data that is currently represented as strings in the existing RPC
+infrastructure will be represented as bytes, unless the data is truly text. JSON
+arrays will be represented using the `repeated` keyword. A generic JSON object
+will be represented as a distinct protobuf message.
 
 ## Sequence Diagrams?
 Below is a sequence diagram of handling two gRPC requests in parallel. In the
