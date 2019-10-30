@@ -92,7 +92,7 @@ including the derived class.
 ```
 class CallData {
 
-    CallData() : _status(LISTEN)
+    CallData(CompletionQueue* cq) :cq_(cq), _status(LISTEN)
     {
         makeListener();
     }
@@ -113,6 +113,7 @@ class CallData {
     virtual void process() = 0;
     virtual void finish() {};
 
+    CompletionQueue* cq_;
     enum CallStatus { LISTEN, PROCESS, FINISH};
     CallStatus status_;
 }
@@ -147,7 +148,7 @@ which places a coroutine on the `JobQueue`, creates a new `CallData` object for
 this request type, and returns immediately (the coroutine executes the handler, which
 populates and sends the response, some time later); once the coroutine is
 executed by the `JobQueue` and the response has been sent, a pointer to this `CallData` object will be placed back on
-the `CompletionQueue`. When `CompletionQueue::Next()` returns a pinter to a `CallData`
+the `CompletionQueue`. When `CompletionQueue::Next()` returns a pointer to a `CallData`
 object for which a response has been sent, `Proceed()` will call `finish()` and
 then delete the object.
 
