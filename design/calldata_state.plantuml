@@ -1,12 +1,9 @@
 @startuml
-[*] -> CREATE : Constructor
-CREATE : CallData object created, not listening
-CREATE --> PROCESS : Proceed()
-PROCESS : Listening for request
-PROCESS --> FINISH : Proceed() (a request was received)
-FINISH : Response submitted for sending
-FINISH --> destroyed : Proceed() (response was sent)
-destroyed : Object destroyed
-destroyed --> [*]
-
+[*] -> LISTEN : makeListener()
+LISTEN : Waiting for a request to arrive
+LISTEN --> PROCESS : Proceed() (calls process())
+PROCESS : Processing a request
+PROCESS --> FINISH : Proceed() (calls finish())
+FINISH : Response has been sent successfully, object destroyed
+FINISH --> [*]
 @enduml

@@ -17,7 +17,7 @@ support to rippled is that gRPC is very easy to use as a client, and has
 bindings in many languages, allowing developers to more quickly develop
 applications without worrying about small details and nuances related to RPC.
 
-## ExecutionConcept
+## Execution Concept
 
 A class encapsulting the gRPC server is a member of `ApplicationImpl`, and is
 constructed at the time of `ApplicationImpl` construction.  The gRPC server does
@@ -68,8 +68,6 @@ endpoint. If the `ResourceManager` indicates that we should "disconnect" from
 a specific endpoint, a coroutine will not be posted to the `JobQueue`, the
 handler will not be called and an error will be returned to the client.
 
-TODO shutdown of gRPC
-
 ## Classes
 The server code is adapted from the example found
 [here](https://github.com/grpc/grpc/blob/v1.24.0/examples/cpp/helloworld/greeter_async_server.cc)
@@ -77,70 +75,81 @@ The server code is adapted from the example found
 `CompletionQueue` is a class of the GRPC library. `CompletionQueue` is used to
 queue events, and provides a method, `CompletionQueue::Next()` to query for any
 events that have occurred. Events are returned by `CompletionQueue` in the form
-of a `void *` pointer. In our application, `CompletionQueue` returns pointers to
+of a `void **` pointer, known as a tag. In our application, `CompletionQueue` returns pointers to
 `CallData` objects, which are used to service requests.
 
 Each request is represented by a `CallData` object. `CallData` is an abstract
 class that implements a method `Proceed()` and can be in one of three states:
-CREATE, PROCESS or FINISH. These states correspond to different states in the
+LISTEN, PROCESS or FINISH. These states correspond to different states in the
 lifecycle of an rpc call, and `Proceed()` transitions the object from one state
-to the next. `CallData` has three pure virtual methods: `doCreate()`,
-`doProcess()` and `doFinish()`, which are implemented by derived classes. For
+to the next. `CallData` has two pure virtual methods: `makeListener()` and
+`process()`, which are implemented by derived classes. For
 each rpc method, there is a class that derives from `CallData`, and implements
-the pure virtual methods.
+the pure virtual methods. `finish()` can be overridden if necessary. The
+destructor is virtual so that `delete this` actually deletes the entire object,
+including the derived class.
 
 ```
 class CallData {
+
+    CallData() : _status(LISTEN)
+    {
+        makeListener();
+    }
+
+    virtual ~CallData() {}
     void Proceed() {
-      if (status_ == CREATE) {
+      if (status_ == LISTEN) {
           status_ = PROCESS;
-          doCreate();
-      } else if (status_ == PROCESS) {
-          status_ = FINISH;
-          doProcess();
+          process();
       } else {
-          GPR_ASSERT(status_ == FINISH);
-          doFinish();
+          _status = FINISH;
+          finish();
+          delete this;
       }
     }
 
-    virtual void doCreate() = 0;
-    virtual void doProcess() = 0;
-    virtual void doFinish() = 0;
+    virtual void makeListener() = 0;
+    virtual void process() = 0;
+    virtual void finish() {};
 
-    CompletionQueue* cq_;
-    enum CallStatus { CREATE, PROCESS, FINISH};
+    enum CallStatus { LISTEN, PROCESS, FINISH};
     CallStatus status_;
 }
 ```
 
-* `doCreate()`, which is called upon object creation (from the constructor),
+* `makeListener()`, which is called upon object creation (from the constructor),
   creates a listener for the rpc method the object is meant to service, binding
-that listener, along with the object itself, to the `CompletionQueue` (each
+that listener, along with a pointer to the object itself (`this`), to the `CompletionQueue` (each
 `CallData` object has a pointer to the same `CompletionQueue`). The effect of
-this listener binding is that when a request is received, a `CallData` object
-representing that particular request will be placed on the `CompletionQueue`.
-* `doProcess()`, which is called after a request has been received, passes to the `JobQueue`
-a coroutine that calls the appropriate handler. `doProcess()` also creates
-another `CallData` object to listen for this request type, since this object
-is processing a response and no longer listening. Note, `doProcess()` itself
+this listener binding is that when a request is received, the pointer to this `CallData` object
+will be returned by `CompletionQueue::Next()`. Note that even though the
+`CallData` object is in a LISTEN state, `CallData` itself is not listening, but
+rather is associated with an internal gRPC listener for this particular request.
+* `process()`, which is called after a request has been received, passes to the `JobQueue`
+a coroutine that calls the appropriate handler. `process()` also creates
+another `CallData` object to service any additional requests, since the current
+object is busy processing a request. Note, `doProcess()` itself
 does not execute the handler, but simply posts a coroutine to the `JobQueue` and
 returns.
-* `doFinish()`, which is called when the response has been sent,
-destroys `this` object
+* `finish()`, is called after the response has been successfully sent, and
+  performs any necessary cleanup or post processing. In most cases, no post
+processing is necessary, so the base class provides a default implementation
+that does nothing. After `finish()` is executed, the `CallData` object destroys
+itself.
 
 In the setup of the event loop, a `CallData` object for each rpc method is
-created. When an event occurs, `CompletionQueue::Next()` returns a pointer to a
-`CallData` object, and the event loop calls `Proceed()` on the returned object. 
-If the event was reception of a request, `Proceed()` will call `doProcess()`,
-which places a coroutine on the `JobQueue`, creates a new listener for this
-request type (via a new `CallData` object), and returns immediately (the coroutine executes the handler, which
+created, which causes gRPC to listen for each type of request.
+When an event occurs, `CompletionQueue::Next()` returns a pointer to a
+`CallData` object as a tag, and the event loop calls `Proceed()` on the returned object. 
+If the event was reception of a request, `Proceed()` will call `process()`,
+which places a coroutine on the `JobQueue`, creates a new `CallData` object for
+this request type, and returns immediately (the coroutine executes the handler, which
 populates and sends the response, some time later); once the coroutine is
-executed by the `JobQueue` and the response has been sent, this `CallData` object will be placed back on
-the `CompletionQueue`. When `CompletionQueue::Next()` returns a `CallData`
-object for which a response has been sent, `Proceed()` will call `doFinish()`,
-which cleans up the resources for this particular request/response and destroys
-the associated `CallData` object.
+executed by the `JobQueue` and the response has been sent, a pointer to this `CallData` object will be placed back on
+the `CompletionQueue`. When `CompletionQueue::Next()` returns a pinter to a `CallData`
+object for which a response has been sent, `Proceed()` will call `finish()` and
+then delete the object.
 
 ```
   void EventLoop() {
@@ -162,35 +171,35 @@ the associated `CallData` object.
 ```
 
 Note, each individual request is encapsulated by its own
-`CallData` object. There is one `CallData` object listening per request type at
-any given time; once a request is received, that `CallData` object is now
-processing the request, and a new `CallData` object is created to listen for new
-requests. There could be many `CallData` objects processing requests (same or
+`CallData` object. There is one `CallData` object per request type in the LISTEN
+state at any given time; once a request is received, that `CallData` object is now
+processing the request (in the PROCESS state), and a new `CallData` object is
+created to service additional requests. There could be many `CallData` objects processing requests (same or
 different type) at any one time, as well as many `CallData` objects waiting to
 be destroyed (after the response has been sent), but there is only one
-`CallData` object per rpc method listening at any given time.
+`CallData` object per rpc method in the LISTEN state at any given time.
 
 
 
 So the general flow for a single `CallData` object is:
-1. Create a `CallData` object for each rpc method, which calls `doCreate()` and
-   creates a listener
-2. When a request is received, `CompletionQueue::Next()` returns a `CallData`
+1. Create a `CallData` object for each rpc method, which calls `makeListener()` and 
+binds a listener, along with a pointer to itself, to the `CompletionQueue`
+2. When a request is received, `CompletionQueue::Next()` returns a pointer to a `CallData`
    object representing the request
-3. `CallData::Proceed()` is called by the event loop, which calls `doProcess()`.
+3. `CallData::Proceed()` is called by the event loop, which calls `process()`.
 This posts a coroutine to
-   the `JobQueue` **and** creates a new `CallData` object to listen for additional
+   the `JobQueue` **and** creates a new `CallData` object to serve additional
 requests
 4. The coroutine is executed (eventually) by the `JobQueue`, populating the response and sending
    the response
-5. Once the response has been successfully sent, the `CallData` object is placed
+5. Once the response has been successfully sent, a pointer to the `CallData` object is placed
    back on the `CompletionQueue`
-6. `CompletionQueue::Next()` returns the `CallData` object for which a response
+6. `CompletionQueue::Next()` returns a pointer to the `CallData` object for which a response
    has been sent
 7. `CallData::Proceed()` is called on the returned object, which calls
-   `doFinish()`, destroying the object.
+   `finish()` and destroys the object
 
-Note that `3` creates a new `CallData` object to listen for requests, which
+Note that `3` creates a new `CallData` object to serve additional requests, which
 begins an additional execution of this flow, executing in parallel to this flow.
 Once the second flow is created, it does not wait for the first flow to finish,
 or synchronize with the first flow in any way,
@@ -301,7 +310,7 @@ infrastructure will be represented as bytes, unless the data is truly text. JSON
 arrays will be represented using the `repeated` keyword. A generic JSON object
 will be represented as a distinct protobuf message.
 
-## Sequence Diagrams?
+## Sequence Diagrams
 Below is a sequence diagram of handling two gRPC requests in parallel. In the
 diagram, the responses are sent in the order the requests were received; this is
 not a rule, and responses could be sent in a different order than the requests
@@ -309,10 +318,10 @@ were recieved.
 
 ![Alt text](https://g.gravizo.com/source/svg?https://raw.githubusercontent.com/cjcobb23/grpcRippledDesign/master/design/execution_sequence.plantuml)
 
-## State Diagrams?
+## State Diagrams
 Below is a state diagram for the CallData objects. Note, `Proceed()` is used to
-advance the state and perform work, and is called first from the constructor,
-and subsequently from the event loop, when the appropriate event occurs.
+advance the state and perform work, and is called from the event loop when the
+appropriate event occurs
 
 ![Alt text](https://g.gravizo.com/source/svg?https://raw.githubusercontent.com/cjcobb23/grpcRippledDesign/master/design/calldata_state.plantuml)
 
