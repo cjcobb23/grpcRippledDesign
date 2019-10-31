@@ -89,12 +89,14 @@ the pure virtual methods. `finish()` can be overridden if necessary. The
 destructor is virtual so that `delete this` actually deletes the entire object,
 including the derived class.
 
+**In the below example, some code is ommitted for the sake of clarity and
+brevity, including arguments to functions and member variables**
+
 ```
 class CallData {
 
     CallData(CompletionQueue* cq) :cq_(cq), _status(LISTEN)
     {
-        makeListener();
     }
 
     virtual ~CallData() {}
@@ -116,7 +118,49 @@ class CallData {
     CompletionQueue* cq_;
     enum CallStatus { LISTEN, PROCESS, FINISH};
     CallStatus status_;
-}
+};
+
+class GetAccountInfoCallData : public CallData {
+
+    AccountInfoCallData(CompletionQueue* cq) : CallData(cq)
+    {
+        makeListener();
+    }
+
+    void makeListener()
+    {
+        // We *request* that the system start listening for GetAccountInfo
+        // requests. "this" acts as the tag uniquely identifying the request 
+        // (so that different CallData instances can serve different requests
+        // concurrently), in this case the memory address of this CallData instance.
+        service_->RequestGetAccountInfo(&ctx_, &request_, &responder_, cq_, cq_, this);
+    }
+
+    void process()
+    {
+
+        // Spawn a new CallData instance to serve new clients while we process
+        // the one for this CallData. The instance will deallocate itself as
+        // part of its FINISH state.
+        new AccountInfoCallData(cq_);
+        app_.getJobQueue().postCoro(...,[this]()
+            {
+                std::pair<AccountInfo,Status> result = ripple::doAccountInfo(request);
+                //submit the response for sending
+                this->responder_.Finish(result.first,result.second,this);
+            }
+    }
+
+    // What we get from the client.
+    GetAccountInfoRequest request_;
+
+    // What we send back to the client.
+    AccountInfo reply_;
+
+    // The means to get back to the client.
+    ServerAsyncResponseWriter<AccountInfo> responder_;
+
+};
 ```
 
 * `makeListener()`, which is called upon object creation (from the constructor),
@@ -150,7 +194,14 @@ populates and sends the response, some time later); once the coroutine is
 executed by the `JobQueue` and the response has been sent, a pointer to this `CallData` object will be placed back on
 the `CompletionQueue`. When `CompletionQueue::Next()` returns a pointer to a `CallData`
 object for which a response has been sent, `Proceed()` will call `finish()` and
-then delete the object.
+then delete the object. Note that each tag sent to the `CompletionQueue` (through
+RPC operations in `makeListener()` or `process()`) will be delivered out of the `CompletionQueue` by a
+call to `CompletionQueue::Next()`, regardless of whether the operation
+succeeded or not. Success here means that this operation completed in the normal
+valid manner. This frees us from having to store `CallData` objects in a
+container, since `CompletionQueue` is a container of pointers to all `CallData` objects,
+and every pointer will eventually be returned from `CompletionQueue::Next()`,
+meaning every `CallData` object will be deleted eventually.
 
 ```
   void EventLoop() {
