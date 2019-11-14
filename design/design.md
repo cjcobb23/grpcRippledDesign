@@ -282,11 +282,11 @@ is the type of the protobuf object. `RPC::ContextGeneric<T>` is very similar to
 `RPC::Context`, except the `params` member is of type `T` and there are no
 `Headers`.
 
-Below is an example handler signature; 'rpc::v1` is the namespace of the
-protobuf objects, whereas `GetFeeRequest` is the request type and `Fee` is the
+Below is an example handler signature; `rpc::v1` is the namespace of the
+protobuf objects, whereas `GetFeeRequest` is the request type and `GetFeeResponse` is the
 response type.
 ```
-rpc::v1::Fee doFee(RPC::ContextGeneric<xrp::v1::GetFeeRequest>& context);
+std::pair<grpc::Status,rpc::v1::GetFeeResponse> doFee(RPC::ContextGeneric<rpc::v1::GetFeeRequest>& context);
 ```
 Versioning for gRPC is usually done by changing the package name, which creates
 protobuf objects in a new c++ namespace. For example, changing the package name
