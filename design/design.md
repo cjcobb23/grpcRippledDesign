@@ -392,9 +392,7 @@ were recieved.
 ![Alt text](https://g.gravizo.com/source/svg?https://raw.githubusercontent.com/cjcobb23/grpcRippledDesign/master/design/execution_sequence.plantuml)
 
 ## State Diagrams
-Below is a state diagram for the CallData objects. Note, `Proceed()` is used to
-advance the state and perform work, and is called from the event loop when the
-appropriate event occurs
+Below is a state diagram for the CallData objects. 
 
 ![Alt text](https://g.gravizo.com/source/svg?https://raw.githubusercontent.com/cjcobb23/grpcRippledDesign/master/design/calldata_state.plantuml)
 
