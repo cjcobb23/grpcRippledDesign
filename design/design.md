@@ -78,184 +78,201 @@ events that have occurred. Events are returned by `CompletionQueue` in the form
 of a `void **` pointer, known as a tag. In our application, `CompletionQueue` returns pointers to
 `CallData` objects, which are used to service requests.
 
-Each request is represented by a `CallData` object. `CallData` is an abstract
-class that implements a method `Proceed()` and can be in one of three states:
-LISTEN, PROCESS or FINISH. These states correspond to different states in the
-lifecycle of an rpc call, and `Proceed()` transitions the object from one state
-to the next. `CallData` has two pure virtual methods: `makeListener()` and
-`process()`, which are implemented by derived classes. For
-each rpc method, there is a class that derives from `CallData`, and implements
-the pure virtual methods. `finish()` can be overridden if necessary. The
-destructor is virtual so that `delete this` actually deletes the entire object,
-including the derived class.
+Each RPC is represented by a `CallData` object. `CallData` is a templated
+class, in which the template parameters are the request type and response type.
+The constructor to CallData takes in two function pointers (as well as other
+data); one of these function pointers is used to create a listener for the specific
+RPC that this `CallData` represents (the function pointed to is a codegen'd GRPC
+call), and the other is used process a request that has arrived (the function
+pointed to is a handler). The function to create a listener is called in the
+constructor of `CallData`.
 
-**In the below example, some code is ommitted for the sake of clarity and
-brevity, including arguments to functions and member variables**
+All `CallData` objects derived from an abstract class `Processor`. Processor has
+several pure virtual methods. These pure virtual methods are called from the
+event loop.
 
 ```
-class CallData {
+class Processor
+{
+    public:
 
-    CallData(CompletionQueue* cq) :cq_(cq), _status(LISTEN)
-    {
-    }
+    virtual ~Processor() {}
 
-    virtual ~CallData() {}
-    void Proceed() {
-      if (status_ == LISTEN) {
-          status_ = PROCESS;
-          process();
-      } else {
-          _status = FINISH;
-          finish();
-          delete this;
-      }
-    }
-
-    virtual void makeListener() = 0;
+    // process a request that has arrived. Can only be called once per instance
     virtual void process() = 0;
-    virtual void finish() {};
 
-    CompletionQueue* cq_;
-    enum CallStatus { LISTEN, PROCESS, FINISH};
-    CallStatus status_;
-};
+    //store an iterator to this object
+    //all Processor objects are stored in a std::list as shared_ptrs, and the 
+    //iterator points to that object's position in the list. When object finishes
+    //processing a request, the iterator is used to delete the object from the list
+    virtual void set_iter(
+            std::list<std::shared_ptr<Processor>>::iterator const& it) = 0;
 
-class GetAccountInfoCallData : public CallData {
+    //get iterator to this object. see above comment
+    virtual std::list<std::shared_ptr<Processor>>::iterator get_iter() = 0;
 
-    AccountInfoCallData(CompletionQueue* cq) : CallData(cq)
-    {
-        makeListener();
-    }
+    //abort processing this request. called when server shutsdown
+    virtual void abort() = 0;
 
-    void makeListener()
-    {
-        // We *request* that the system start listening for GetAccountInfo
-        // requests. "this" acts as the tag uniquely identifying the request 
-        // (so that different CallData instances can serve different requests
-        // concurrently), in this case the memory address of this CallData instance.
-        service_->RequestGetAccountInfo(&ctx_, &request_, &responder_, cq_, cq_, this);
-    }
+    //create a new instance of this CallData object, with the same type
+    //(same template parameters) as original. This is called when a CallData
+    //object starts processing a request. Creating a new instance allows the 
+    //server to handle additional requests while the first is being processed
+    virtual std::shared_ptr<Processor> clone() = 0;
 
-    void process()
-    {
-
-        // Spawn a new CallData instance to serve new clients while we process
-        // the one for this CallData. The instance will deallocate itself as
-        // part of its FINISH state.
-        new AccountInfoCallData(cq_);
-        app_.getJobQueue().postCoro(...,[this]()
-            {
-                std::pair<AccountInfo,Status> result = ripple::doAccountInfo(request);
-                //submit the response for sending
-                this->responder_.Finish(result.first,result.second,this);
-            }
-    }
-
-    // What we get from the client.
-    GetAccountInfoRequest request_;
-
-    // What we send back to the client.
-    AccountInfo reply_;
-
-    // The means to get back to the client.
-    ServerAsyncResponseWriter<AccountInfo> responder_;
-
+    //true if this object has finished processing the request. Object will be
+    //deleted once this function returns true
+    virtual bool isFinished() = 0;
 };
 ```
 
-* `makeListener()`, which is called upon object creation (from the constructor),
-  creates a listener for the rpc method the object is meant to service, binding
-that listener, along with a pointer to the object itself (`this`), to the `CompletionQueue` (each
-`CallData` object has a pointer to the same `CompletionQueue`). The effect of
-this listener binding is that when a request is received, the pointer to this `CallData` object
-will be returned by `CompletionQueue::Next()`. Note that even though the
-`CallData` object is in a LISTEN state, `CallData` itself is not listening, but
-rather is associated with an internal gRPC listener for this particular request.
-* `process()`, which is called after a request has been received, passes to the `JobQueue`
-a coroutine that calls the appropriate handler. `process()` also creates
-another `CallData` object to service any additional requests, since the current
-object is busy processing a request. Note, `doProcess()` itself
-does not execute the handler, but simply posts a coroutine to the `JobQueue` and
-returns.
-* `finish()`, is called after the response has been successfully sent, and
-  performs any necessary cleanup or post processing. In most cases, no post
-processing is necessary, so the base class provides a default implementation
-that does nothing. After `finish()` is executed, the `CallData` object destroys
-itself.
-
-In the setup of the event loop, a `CallData` object for each rpc method is
-created, which causes gRPC to listen for each type of request.
-When an event occurs, `CompletionQueue::Next()` returns a pointer to a
-`CallData` object as a tag, and the event loop calls `Proceed()` on the returned object. 
-If the event was reception of a request, `Proceed()` will call `process()`,
-which places a coroutine on the `JobQueue`, creates a new `CallData` object for
-this request type, and returns immediately (the coroutine executes the handler, which
-populates and sends the response, some time later); once the coroutine is
-executed by the `JobQueue` and the response has been sent, a pointer to this `CallData` object will be placed back on
-the `CompletionQueue`. When `CompletionQueue::Next()` returns a pointer to a `CallData`
-object for which a response has been sent, `Proceed()` will call `finish()` and
-then delete the object. Note that each tag sent to the `CompletionQueue` (through
-RPC operations in `makeListener()` or `process()`) will be delivered out of the `CompletionQueue` by a
-call to `CompletionQueue::Next()`, regardless of whether the operation
-succeeded or not. Success here means that this operation completed in the normal
-valid manner. This frees us from having to store `CallData` objects in a
-container, since `CompletionQueue` is a container of pointers to all `CallData` objects,
-and every pointer will eventually be returned from `CompletionQueue::Next()`,
-meaning every `CallData` object will be deleted eventually.
-
+The event loop queries the `CompletionQueue` for the next event that has
+occurred. `CompletionQueue::Next()` is a blocking call. When a request arrives,
+`CompletionQueue::Next()` sets the `tag` variable to the `Processor` object that
+is handling the request. The event loop calls `Processor::process()` to handle
+the request (`process()` simply posts a coroutine to the `JobQueue` and
+returns). In addition to calling `process()`, the event loop also calls
+`Processor::clone()` to create a new listener; this allows the gRPC server to
+handle additional requests while the response to the first request is being
+populated. When the coroutine executes, a response is submitted to the
+`CompletionQueue` for sending. Once the response is actually sent,
+`CompletionQueue::Next()` will set the `tag` variable to the `Processor` object
+that handled the request. At this point, `Processor::isFinished()` will return
+true, and the object will be deleted. See the next paragraph on lifetime
+management for more details about the deletion.
 ```
-  void EventLoop() {
-    // Spawn new CallData instances to serve new clients.
-    new AccountInfoCallData(&service_, completion_queue_.get(), app_);
-    new FeeCallData(&service_, completion_queue_.get(), app_);
-    ///... Additional CallData instances for additional rpc methods
-
+//event loop
+void GRPCServerImpl::handleRpcs() {
     void* tag;  // uniquely identifies a request.
     bool ok;
-    while (true) {
-      // Block waiting to read the next event from the completion queue. The
-      // event is uniquely identified by its tag, which is the memory address
-      // of a CallData instance.
-      completion_queue_->Next(&tag, &ok);
-      static_cast<CallData*>(tag)->Proceed();
+    // Block waiting to read the next event from the completion queue. The
+    // event is uniquely identified by its tag, which in this case is the
+    // memory address of a CallData instance.
+    // The return value of Next should always be checked. This return value
+    // tells us whether there is any kind of event or cq_ is shutting down.
+    while (cq_->Next(&tag,&ok)) {
+
+        //if ok is false, event was terminated as part of a shutdown sequence
+        //need to abort any further processing
+        if(!ok)
+        {
+            //abort first, then erase. Otherwise, erase can delete object
+            static_cast<Processor*>(tag)->abort();
+            requests_.erase(static_cast<Processor*>(tag)->get_iter());
+        }
+        else
+        {
+            auto ptr = static_cast<Processor*>(tag);
+            if(!ptr->isFinished())
+            {
+                //ptr is now processing a request, so create a new CallData
+                //object to handle additional requests
+                auto cloned = ptr->clone();
+                requests_.push_front(cloned);
+                //set iterator as data member for later lookup
+                cloned->set_iter(requests_.begin());
+                //process the request
+                ptr->process();
+            }
+            else
+            {
+                //rpc is finished, delete CallData object
+                requests_.erase(static_cast<Processor*>(tag)->get_iter());
+            }
+        }
     }
-  }
+}
 ```
 
-Note, each individual request is encapsulated by its own
-`CallData` object. There is one `CallData` object per request type in the LISTEN
-state at any given time; once a request is received, that `CallData` object is now
-processing the request (in the PROCESS state), and a new `CallData` object is
-created to service additional requests. There could be many `CallData` objects processing requests (same or
-different type) at any one time, as well as many `CallData` objects waiting to
-be destroyed (after the response has been sent), but there is only one
-`CallData` object per rpc method in the LISTEN state at any given time.
+`requests_` is of type `std::list<std::shared_ptr<Processor>>`. This list
+contains each `CallData` object that is waiting for a request (there are
+always `n` CallData objects waiting for a request at a time, where `n` is the number of
+RPCs). This list also contains every `CallData` object that is currently
+handling a request (could be many), as well as any `CallData` objects that have
+sent a response and are waiting to be deleted. Each `CallData` object is added
+to this list upon creation. After the `CallData` object is added to the list,
+we also retrieve an iterator that points to the `CallData` object in the list,
+and store that iterator as a data member of the `CallData` object. When the
+`CallData` object is ready for deletion, we use the iterator to remove the
+`CallData` object from the list.
+
+Special care must be taken to handle shutting down the server. When the server
+shuts down, all pending events are immediately cancelled. The way this works is
+that the gRPC runtime adds every outstanding `tag` (pointer to `Processor` in
+our application) to the `CompletionQueue`.
+This cancels any current listeners, and cancels any responses queued for
+sending. `CompletionQueue::Next()` will return each of these pointers, and also
+sets the `ok` variable to false (meaning the event was cancelled). For every
+cancelled event, we erase the `Processor` object from the list. However, there
+exists a race condition, due to the handler function being executed from the
+`JobQueue`. When the event is cancelled, the coroutine posted to the `JobQueue`
+will still execute, if it has not already executed. To make sure that the object
+is not deleted in the middle of handler execution, the coroutine captures a
+shared_ptr to itself (via `shared_from_this()`). In this manner, when the event
+loop erases the `Processor` shared_ptr from the `requests_` list, the object
+will not be deleted if the coroutine is still waiting to be executed. The event
+loop also calls `abort()` on the `Processor` object, which simply sets a member
+boolean member variable to signal abortion. When the coroutine executes, it
+first locks a mutex and checks if the RPC has been aborted. If so, the coroutine
+immediately returns and does not populate a response. If the `Processor` object
+has already been erased from the list, returning from the coroutine will cause
+the `Processor` object to be deleted.
+
+Note, there is no contention for this mutex unless the server is shutting down.
+Also, the mutex acts as a memory barrier to force cache coherency of the
+`aborted_` and `status_` members.
+
+```
+
+template <class Request, class Response>
+void GRPCServerImpl::CallData<Request, Response>::process()
+{
+    if (status_ == PROCESSING) {
+        std::shared_ptr<CallData<Request,Response>> this_s =
+            this->shared_from_this();
+        app_.getJobQueue().postCoro(JobType::jtRPC, "gRPC-Client",
+                [this_s](std::shared_ptr<JobQueue::Coro> coro)
+                {
+                    std::lock_guard<std::mutex> lock(this_s->mut_);
+
+                    //Do nothing if call has been aborted due to server shutdown
+                    if(this_s->aborted_)
+                        return;
+
+                    this_s->process(coro);
+                    this_s->status_ = FINISH;
+                });
+    }
+}
 
 
+```
 
 So the general flow for a single `CallData` object is:
-1. Create a `CallData` object for each rpc method, which calls `makeListener()` and 
-binds a listener, along with a pointer to itself, to the `CompletionQueue`
-2. When a request is received, `CompletionQueue::Next()` returns a pointer to a `CallData`
+1. Create a `CallData` object for each rpc method, and add it as a `shared_ptr<Processor>`
+to the `requests_` list. Creation of the `CallData`object creates a listener for
+associated RPC.
+2. When a request is received, `CompletionQueue::Next()` returns a pointer to a `Processor`
    object representing the request
-3. `CallData::Proceed()` is called by the event loop, which calls `process()`.
+3. `Processor::process()` is called by the event loop.
 This posts a coroutine to
-   the `JobQueue` **and** creates a new `CallData` object to serve additional
-requests
+   the `JobQueue`.  The event loop also calls `Processor::clone()` to create a new 
+`CallData` object, with the same template parameters, to serve additional requests.
 4. The coroutine is executed (eventually) by the `JobQueue`, populating the response and sending
    the response
-5. Once the response has been successfully sent, a pointer to the `CallData` object is placed
+5. Once the response has been successfully sent, a pointer to the `Processor` object is placed
    back on the `CompletionQueue`
-6. `CompletionQueue::Next()` returns a pointer to the `CallData` object for which a response
+6. `CompletionQueue::Next()` returns a pointer to the `Processor` object for which a response
    has been sent
-7. `CallData::Proceed()` is called on the returned object, which calls
-   `finish()` and destroys the object
+7. The `Processor` object is erased from the `requests_` list, causing the object
+   to be deleted. 
 
 Note that `3` creates a new `CallData` object to serve additional requests, which
 begins an additional execution of this flow, executing in parallel to this flow.
 Once the second flow is created, it does not wait for the first flow to finish,
 or synchronize with the first flow in any way,
 and could potentially finish executing before the first flow finishes.
+
 
 There will be a handler for each gRPC method, separate from the existing json
 handlers. The handler will take in the protobuf object that represents the
@@ -265,15 +282,15 @@ is the type of the protobuf object. `RPC::ContextGeneric<T>` is very similar to
 `RPC::Context`, except the `params` member is of type `T` and there are no
 `Headers`.
 
-Below is an example handler signature; `xrp::v1` is the namespace of the
+Below is an example handler signature; 'rpc::v1` is the namespace of the
 protobuf objects, whereas `GetFeeRequest` is the request type and `Fee` is the
 response type.
 ```
-xrp::v1::Fee doFee(RPC::ContextGeneric<xrp::v1::GetFeeRequest>& context);
+rpc::v1::Fee doFee(RPC::ContextGeneric<xrp::v1::GetFeeRequest>& context);
 ```
 Versioning for gRPC is usually done by changing the package name, which creates
 protobuf objects in a new c++ namespace. For example, changing the package name
-to `xrp.v2` results in objects with namespace `xrp::v2`. In the event
+to `rpc.v2` results in objects with namespace `rpc::v2`. In the event
 that a handler does not change between versions (which implies the objects are
 the same in all but namespace), the old handler can be reused by templating the
 handler signature like so:
@@ -296,14 +313,16 @@ client and server), handles serialization, deserialization and I/O. Protobuf
 allows one to define messages with named and typed fields, and allows for user
 defined types. Client and server code can then manipulate the generated objects using the
 message names, field names and types defined in the `.proto` file. For example,
-using the below example `.proto` file:
+using the below example `.proto` file (this is just an example, not the real
+service definition):
 ```
-service XRPLedgerAPI {
+service XRPLedgerAPIService {
   // Get account info for an account on the XRP Ledger.
-  rpc GetAccountInfo (GetAccountInfoRequest) returns (AccountInfo);
+  rpc GetAccountInfo (GetAccountInfoRequest) returns (GetAccountInfoResponse);
 
   // Get the fee for a transaction on the XRP Ledger.
-  rpc GetFee (GetFeeRequest) returns (Fee);
+  rpc GetFee (GetFeeRequest) returns (GetFeeResponse);
+
   message GetAccountInfoRequest {
     // The address to get info about.
     bytes address = 1;
@@ -325,7 +344,9 @@ A client can do things like:
 ```
 GetAccountInfoRequest request;
 request.set_address("rLkMJhSVwhmummLjJPVrwQRZZYiYQhVQ1A");
+
 //Send the request, receive populated response
+
 uint32_t sequence = response.sequence();
 std::string drops = response.balance.drops();
 ```

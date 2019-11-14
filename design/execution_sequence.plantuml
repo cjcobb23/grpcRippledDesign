@@ -1,11 +1,11 @@
-@startuml;
-actor Client1;
+@startuml
+actor Client1
 actor Client2
-participant "GRPC Server" as G;
-participant "JobQueue" as JQ;
-Client1 -> G: Send Request;
+participant "GRPC Server" as G
+participant "JobQueue" as JQ
+Client1 -> G: Send Request
 G -> JQ : Post Coroutine
-Client2 -> G: Send Request;
+Client2 -> G: Send Request
 G -> JQ : Post Coroutine
 JQ -> Client1 : Execute Coroutine and Send Response
 JQ -> Client2 : Execute Coroutine and Send Response

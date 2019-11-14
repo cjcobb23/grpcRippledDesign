@@ -1,9 +1,10 @@
 @startuml
-[*] -> LISTEN : makeListener()
-LISTEN : Waiting for a request to arrive
-LISTEN --> PROCESS : Proceed() (calls process())
-PROCESS : Processing a request
-PROCESS --> FINISH : Proceed() (calls finish())
-FINISH : Response has been sent successfully, object destroyed
-FINISH --> [*]
+[*] -> WAITING : constructor
+WAITING : Created listener. Added to list. Waiting for request
+WAITING --> PROCESSING : request arrives. Event loop calls process()
+PROCESSING : Executing handler on job queue. Populating response
+PROCESSING --> FINISHED : Submit response for sending
+FINISHED : Waiting for response to be sent
+FINISHED --> DELETED : Response sent. Event loop removes object from list.
+DELETED : object destroyed
 @enduml
