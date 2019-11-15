@@ -1,0 +1,10 @@
+@startuml
+[*] -> WAITING : constructor
+WAITING : Created listener. Added to list. Waiting for request
+WAITING --> PROCESSING : request arrives. Event loop calls process()
+PROCESSING : Executing handler on job queue. Populating response
+PROCESSING --> FINISHED : Submit response for sending
+FINISHED : Waiting for response to be sent
+FINISHED --> DELETED : Response sent. Event loop removes object from list.
+DELETED : object destroyed
+@enduml
