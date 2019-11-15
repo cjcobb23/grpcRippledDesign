@@ -336,7 +336,7 @@ service XRPLedgerAPIService {
   }
   message XRPAmount {
     // A numeric string representing the number of drops of XRP.
-    bytes drops = 1;
+    uint64 drops = 1;
   }
 }
 ```
